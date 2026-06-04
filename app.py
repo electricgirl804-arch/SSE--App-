@@ -1,78 +1,89 @@
 import streamlit as st
-from gtts import gTTS
-import qrcode
+import geocoder
+import datetime
+import math
+from fpdf import FPDF
 from io import BytesIO
-from reportlab.pdfgen import canvas
+from gtts import gTTS
 
-# --- 1. إعدادات المساعد الصوتي ---
+# --- 1. الدوال التفاعلية ---
 def speak(text):
-    tts = gTTS(text=text, lang='ar')
-    tts.save("response.mp3")
-    st.audio("response.mp3", format="audio/mp3", autoplay=True)
+    try:
+        tts = gTTS(text=text, lang='ar')
+        fp = BytesIO()
+        tts.write_to_fp(fp)
+        st.audio(fp.getvalue(), format="audio/mp3", autoplay=True)
+    except: pass
 
-# --- دالة الأيقونات التفاعلية ---
-def render_icon_card(icon, label, key):
-    st.markdown(f"""
-    <div style="text-align: center; border: 2px solid #ddd; padding: 15px; border-radius: 15px; background-color: #f9f9f9;">
-        <h1 style="font-size: 40px;">{icon}</h1>
-        <p style="font-weight: bold;">{label}</p>
-    </div>
+def calculate_system(total_watts, battery_capacity, dod):
+    daily_energy = total_watts * 5
+    panels = math.ceil(daily_energy / (450 * 4 * 0.8))
+    batteries = math.ceil(daily_energy / (12 * battery_capacity * dod))
+    inverter = math.ceil(total_watts * 1.25)
+    breaker = math.ceil((total_watts / 12) * 1.25)
+    return panels, batteries, inverter, breaker
+
+def create_pdf(data):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt="SSE Engineering Certified Report", ln=True, align='C')
+    pdf.set_font("Arial", size=12)
+    for k, v in data.items(): pdf.cell(200, 10, txt=f"{k}: {v}", ln=True)
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- 2. إعدادات النظام ---
+st.set_page_config(page_title="SSE - النظام الميداني المتكامل", layout="centered")
+st.markdown("""
+    <style>
+    .card { background: white; padding: 25px; border-radius: 25px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 8px solid #2c3e50; }
+    .alert { background-color: #ffcccc; color: #cc0000; padding: 20px; border-radius: 15px; font-weight: bold; text-align: center; }
+    .success-box { background-color: #f1f8e9; border: 2px solid #27ae60; padding: 20px; border-radius: 20px; text-align: center; }
+    </style>
     """, unsafe_allow_html=True)
-    return st.checkbox("اختيار", key=key)
 
-# --- 2. واجهة التطبيق ---
-st.image("1000224208_20.jpg", width=300)
-st.title("☀️ منصة SSE الهندسية")
-st.subheader("نحو مستقبل طاقة مستدام في السودان")
+if 'devices' not in st.session_state: st.session_state.devices = {}
 
-# --- 3. الترحيب ---
-if 'started' not in st.session_state:
-    speak("أهلاً بك في منصة SSE الهندسية. أنا مساعدك الرقمي، ابدأ بتحديد أحمالك.")
-    st.session_state.started = True
+st.title("☀️ SSE Engineering")
+tab1, tab2, tab3 = st.tabs(["👋 الترحيب", "⚙️ التصميم", "🛡️ التوثيق"])
 
-# --- 4. المدخلات الهندسية (الأيقونات التفاعلية) ---
-location = st.selectbox("📍 اختر المدينة:", ["أم درمان", "الخرطوم", "عطبرة", "بورتسودان"])
-st.header("⚙️ اختيار الأحمال")
+# تبويب 1: الترحيب
+with tab1:
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    if st.button("🔊 استمع للترحيب"): speak("أهلاً بك في منصة اس اس اي الهندسية. رفيقك الرقمي لضمان كفاءة طاقتك.")
+    g = geocoder.ip('me')
+    st.metric("الموقع الجغرافي", f"{g.lat if g.lat else 15.5:.2f}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-col1, col2, col3, col4 = st.columns(4)
-with col1: washer = render_icon_card("🧺", "غسالة", "washer")
-with col2: ac = render_icon_card("❄️", "مكيف", "ac")
-with col3: motor = render_icon_card("⚙️", "موتور", "motor")
-with col4: light = render_icon_card("💡", "إضاءة", "light")
-
-# --- 5. محرك الحسابات ---
-if st.button("حساب المنظومة"):
-    total_watts = (washer*2000) + (ac*1500) + (motor*1000) + (light*200)
-    panels = (total_watts * 1.2) / 550
-    battery = (total_watts * 5) / 24
+# تبويب 2: التصميم والإنذار
+with tab2:
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    name = st.text_input("اسم الجهاز:")
+    power = st.number_input("القدرة (وات):", min_value=10)
+    if st.button("➕ إضافة للجرد"): st.session_state.devices[name] = power
     
-    st.write("### 📊 نتائج التصميم:")
-    st.write(f"- إجمالي القدرة: {total_watts} واط")
-    st.write(f"- عدد الألواح: {round(panels, 1)}")
-    st.write(f"- سعة البطاريات: {round(battery, 2)} Ah")
-    speak("تمت الحسابات بنجاح.")
+    total = sum(st.session_state.devices.values())
+    if total > 5000:
+        st.markdown("<div class='alert'>⚠️ إنذار: الحمل يتجاوز السعة المصممة!</div>", unsafe_allow_html=True)
+        speak("تنبيه، الحمل الزائد يتجاوز القدرة المصممة للنظام.")
+    
+    cap = st.number_input("سعة البطارية (Ah):", value=200)
+    dod = st.slider("عمق التفريغ (DoD %):", 10, 50, 20) / 100
+    
+    if total > 0:
+        p, b, inv, br = calculate_system(total, cap, dod)
+        st.table({"المكون": ["ألواح", "بطاريات", "أنفرتر", "قاطع"], "النتيجة": [f"{p} لوح", f"{b} بطارية", f"{inv}W", f"{br}A"]})
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# --- 6. التحقق الأمني ---
-st.header("🛡️ التحقق من المكونات")
-if st.button("بدء الفحص البصري"):
-    img = st.camera_input("وجه الكاميرا لبيانات المنتج")
+# تبويب 3: التوثيق والخاتمة
+with tab3:
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    img = st.camera_input("افحص الموقع لالاعتماد")
     if img:
-        st.success("✅ المنتج مطابق للمواصفات")
-
-# --- 7. التوثيق والتقرير ---
-if st.button("📥 إصدار شهادة اعتماد SSE"):
-    qr_data = f"SSE-Verified | Contact: Electricgirl804@gmail.com"
-    qr = qrcode.make(qr_data)
-    buf = BytesIO()
-    qr.save(buf, format="PNG")
-    st.image(buf.getvalue(), caption="ختم الاعتماد الرقمي - SSE")
-    
-    pdf_filename = "SSE_System_Report.pdf"
-    c = canvas.Canvas(pdf_filename)
-    c.drawString(100, 800, "تقرير اعتماد SSE")
-    c.save()
-    
-    with open(pdf_filename, "rb") as f:
-        st.download_button("تحميل التقرير PDF", f, file_name=pdf_filename)
-    speak("تم اعتماد المنظومة.")
+        st.success("تم التوثيق بنجاح!")
+        speak("تم اعتماد المشروع بنجاح، شكراً لثقتكم في نظام اس اس اي.")
+        st.markdown("<div class='success-box'><h2>✅ تم الاعتماد الهندسي</h2><p>SSE Engineering - الجودة عنواننا</p></div>", unsafe_allow_html=True)
+        pdf = create_pdf({"التاريخ": str(datetime.date.today()), "الحمل الكلي": str(sum(st.session_state.devices.values()))})
+        st.download_button("📥 تحميل التقرير الختامي", data=pdf, file_name="SSE_Final_Report.pdf")
+    st.markdown("</div>", unsafe_allow_html=True)
 
