@@ -1,7 +1,5 @@
 streamlit
+gtts
 qrcode
-requests
-streamlit-javascript
-gTTS
-Pillow
+reportlab
 
