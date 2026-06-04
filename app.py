@@ -1,86 +1,78 @@
 import streamlit as st
-import qrcode
-import requests
-import os
-from io import BytesIO
-from streamlit_javascript import st_javascript
 from gtts import gTTS
-import base64
+import qrcode
+from io import BytesIO
+from reportlab.pdfgen import canvas
 
-# 1. إعدادات الصفحة والهوية
-st.set_page_config(page_title="SSE - المهندس الرقمي", layout="centered")
-
-st.markdown("""
-    <style>
-    .stApp { background: linear-gradient(135deg, #FF8C00 20%, #1E90FF 100%); color: white; }
-    h1, h2, h3 { color: #ffffff !important; }
-    .stButton>button { background-color: #ffffff; color: #FF8C00; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# 2. عرض الشعار
-if os.path.exists("1000224208.jpg"):
-    st.image("1000224208.jpg", use_container_width=True)
-
-st.title("المهندس الرقمي المتكامل (SSE)")
-
-# 3. دالة الإنذار الصوتي
-def play_alert(text):
+# --- 1. إعدادات المساعد الصوتي ---
+def speak(text):
     tts = gTTS(text=text, lang='ar')
-    fp = BytesIO()
-    tts.write_to_fp(fp)
-    audio_base64 = base64.b64encode(fp.getvalue()).decode()
-    st.markdown(f'<audio autoplay="true" src="data:audio/mp3;base64,{audio_base64}"></audio>', unsafe_allow_html=True)
+    tts.save("response.mp3")
+    st.audio("response.mp3", format="audio/mp3", autoplay=True)
 
-# 4. الأفاتار الترحيبي
-st.chat_message("assistant", avatar="🤖").markdown("أهلاً! أنا مساعدك المهندس الذكي. سأرشدكِ في تصميم وتوثيق منظومتك.")
+# --- دالة الأيقونات التفاعلية ---
+def render_icon_card(icon, label, key):
+    st.markdown(f"""
+    <div style="text-align: center; border: 2px solid #ddd; padding: 15px; border-radius: 15px; background-color: #f9f9f9;">
+        <h1 style="font-size: 40px;">{icon}</h1>
+        <p style="font-weight: bold;">{label}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    return st.checkbox("اختيار", key=key)
 
-# 5. البيانات والمدن
-sudan_cities = {"الخرطوم": {"lat": 15.50, "lon": 32.55}, "عطبرة": {"lat": 17.68, "lon": 33.95}, "بورتسودان": {"lat": 19.61, "lon": 37.22}}
+# --- 2. واجهة التطبيق ---
+st.image("1000224208_20.jpg", width=300)
+st.title("☀️ منصة SSE الهندسية")
+st.subheader("نحو مستقبل طاقة مستدام في السودان")
 
-# 6. الإدخال الميداني
-with st.expander("🛠️ إعدادات التصميم والفحص"):
-    city = st.selectbox("📍 مدينتك:", list(sudan_cities.keys()))
-    prod_type = st.selectbox("🔍 نوع المنتج:", ["لوح شمسي", "بطارية", "إنفرتر"])
-    photo = st.camera_input(f"📸 صوري {prod_type} للتحقق من الجودة:")
+# --- 3. الترحيب ---
+if 'started' not in st.session_state:
+    speak("أهلاً بك في منصة SSE الهندسية. أنا مساعدك الرقمي، ابدأ بتحديد أحمالك.")
+    st.session_state.started = True
 
-# 7. منطق التحليل، بيانات ناسا، والإنذار
-if photo and st.button("🚀 بدء التحليل والاعتماد الهندسي"):
-    # محاكاة فحص الجودة
-    is_genuine = True # (هنا يتم ربط خوارزمية الذكاء الاصطناعي لاحقاً)
+# --- 4. المدخلات الهندسية (الأيقونات التفاعلية) ---
+location = st.selectbox("📍 اختر المدينة:", ["أم درمان", "الخرطوم", "عطبرة", "بورتسودان"])
+st.header("⚙️ اختيار الأحمال")
+
+col1, col2, col3, col4 = st.columns(4)
+with col1: washer = render_icon_card("🧺", "غسالة", "washer")
+with col2: ac = render_icon_card("❄️", "مكيف", "ac")
+with col3: motor = render_icon_card("⚙️", "موتور", "motor")
+with col4: light = render_icon_card("💡", "إضاءة", "light")
+
+# --- 5. محرك الحسابات ---
+if st.button("حساب المنظومة"):
+    total_watts = (washer*2000) + (ac*1500) + (motor*1000) + (light*200)
+    panels = (total_watts * 1.2) / 550
+    battery = (total_watts * 5) / 24
     
-    if not is_genuine:
-        st.error("⚠️ إنذار: المنتج غير مطابق للمواصفات!")
-        play_alert("تنبيه، المنتج غير أصلي، يرجى مراجعة المواصفات")
-    else:
-        # جلب بيانات ناسا
-        coords = sudan_cities[city]
-        st.success(f"✅ تم توثيق {prod_type} بنجاح باستخدام بيانات NASA!")
-        st.write(f"📊 تقرير: المنظومة متوافقة مع معايير SSE في {city}.")
-        
-        # باركود الاعتماد
-        qr = qrcode.make(f"SSE Certified Product: {prod_type} | Location: {city}")
-        buf = BytesIO()
-        qr.save(buf, format="PNG")
-        st.image(buf.getvalue(), caption="باركود الاعتماد النهائي")
+    st.write("### 📊 نتائج التصميم:")
+    st.write(f"- إجمالي القدرة: {total_watts} واط")
+    st.write(f"- عدد الألواح: {round(panels, 1)}")
+    st.write(f"- سعة البطاريات: {round(battery, 2)} Ah")
+    speak("تمت الحسابات بنجاح.")
 
-# 8. التذييل
-with st.sidebar:
-    st.subheader("معلومات التواصل")
-    st.write("📧 electricgirl804@gmail.com")
-    st.write("📱 +249 11 567 8067")
-    st.info("أداة ضبط الزاوية نشطة (ضعي الهاتف فوق اللوح).")
-    st_javascript("window.addEventListener('deviceorientation', (e) => {window.parent.postMessage({type: 'tilt', value: e.beta}, '*');});")
+# --- 6. التحقق الأمني ---
+st.header("🛡️ التحقق من المكونات")
+if st.button("بدء الفحص البصري"):
+    img = st.camera_input("وجه الكاميرا لبيانات المنتج")
+    if img:
+        st.success("✅ المنتج مطابق للمواصفات")
 
-# 9. الخاتمة
-st.markdown("---")
-st.success("""
-### ✍️ كلمة المهندسة:
-لقد تم تصميم هذه المنظومة وفق أدق المعايير الهندسية الدولية (IEC). 
-**أنا هنا لضمان أن تكون منظومتكِ ليست فقط عاملة، بل آمنة وذات كفاءة قصوى.**
+# --- 7. التوثيق والتقرير ---
+if st.button("📥 إصدار شهادة اعتماد SSE"):
+    qr_data = f"SSE-Verified | Contact: Electricgirl804@gmail.com"
+    qr = qrcode.make(qr_data)
+    buf = BytesIO()
+    qr.save(buf, format="PNG")
+    st.image(buf.getvalue(), caption="ختم الاعتماد الرقمي - SSE")
+    
+    pdf_filename = "SSE_System_Report.pdf"
+    c = canvas.Canvas(pdf_filename)
+    c.drawString(100, 800, "تقرير اعتماد SSE")
+    c.save()
+    
+    with open(pdf_filename, "rb") as f:
+        st.download_button("تحميل التقرير PDF", f, file_name=pdf_filename)
+    speak("تم اعتماد المنظومة.")
 
-*مع تحياتي،*
-**مهندسة طاقة شمسية - SSE**
-""")
- 
- 
