@@ -1,1 +1,7 @@
+streamlit
+qrcode
+requests
+streamlit-javascript
+gTTS
+Pillow
 
