@@ -1,6 +1,11 @@
 streamlit
-geocoder
+streamlit-geolocation
+requests
 fpdf
+openai
+twilio
+pandas
+geocoder
 gTTS
 qrcode
 pillow
