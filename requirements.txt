@@ -1,6 +1,5 @@
 streamlit
-geocoder
+pandas
+plotly
 fpdf
-pypdf
-pillow
 
