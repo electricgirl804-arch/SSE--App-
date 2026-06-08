@@ -1,7 +1,5 @@
 streamlit
-pandas
 plotly
-fpdf
-requests
-pypdf
+pandas
+numpy
 
