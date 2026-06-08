@@ -1,5 +1,8 @@
 streamlit
-pandas
 requests
+folium
+streamlit-folium
+fpdf
 plotly
+pandas
 
