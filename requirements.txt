@@ -5,5 +5,4 @@ streamlit-folium
 fpdf
 plotly
 pandas
-smtplib
 
