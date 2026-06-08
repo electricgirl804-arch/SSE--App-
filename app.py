@@ -1,4 +1,4 @@
-
+import streamlit as st
 import requests
 import folium
 from streamlit_folium import folium_static
@@ -64,3 +64,4 @@ with col3:
             st.success("تم التوثيق والتحليل بنجاح!")
             st.balloons()
     st.markdown("</div>", unsafe_allow_html=True)
+
