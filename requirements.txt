@@ -1,8 +1,6 @@
-streamlit
-requests
-folium
-streamlit-folium
-fpdf
-plotly
-pandas
-
+streamlit==1.37.0
+pandas==2.2.2
+requests==2.32.3
+reportlab==4.1.0
+gspread==5.12.4
+oauth2client==4.1.3
