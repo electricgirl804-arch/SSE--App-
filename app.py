@@ -33,29 +33,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# ===== Manifest كامل عشان PWABuilder يقبل =====
-manifest_json = {
-    "name": "SSE منصة الطاقة الذكية",
-    "short_name": "SSE Energy",
-    "description": "أول منصة ذكية للطاقة الشمسية في السودان - حساب + كشف خداع + بيانات NASA",
-    "start_url": "/",
-    "display": "standalone",
-    "background_color": "#0F172A",
-    "theme_color": "#F59E0B",
-    "orientation": "portrait",
-    "icons": [
-        {
-            "src": "https://via.placeholder.com/192/F59E0B/0F172A?text=SSE",
-            "sizes": "192x192",
-            "type": "image/png"
-        },
-        {
-            "src": "https://via.placeholder.com/512/F59E0B/0F172A?text=SSE",
-            "sizes": "512x512",
-            "type": "image/png"
-        }
-    ]
-}
+# ===== سطرين PWA بس - بدل البلوك القديم كلو =====
+st.markdown('<link rel="manifest" href="/manifest.json">', unsafe_allow_html=True)
+st.markdown('<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>{navigator.serviceWorker.register("/sw.js")})}</script>', unsafe_allow_html=True)
 
 # ===== CSS فخم + أنيميشن + وضع ليل/نهار =====
 st.markdown(f"""
@@ -90,7 +70,6 @@ html, body {{font-family: 'Cairo', sans-serif; background: linear-gradient(135de
 
 footer {{visibility: hidden;}}
 </style>
-<link rel="manifest" href="data:application/json,{str(manifest_json).replace("'", '"')}">
 <meta name="theme-color" content="#F59E0B">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SSE Energy">
@@ -262,4 +241,3 @@ with tab5:
         st.line_chart(chart_data.set_index('الساعة'))
 
 st.sidebar.button("🚪 خروج", on_click=lambda: st.session_state.update({"logged_in": False}))
-
