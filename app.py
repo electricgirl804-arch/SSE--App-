@@ -119,7 +119,7 @@ def calc_full(system_kw, panel, inv, panel_supplier, inv_supplier, city, tilt, a
 
     num_panels = math.ceil(system_kw * 1000 / p_spec["p"])
     max_series = inv_spec["max_voc"] // p_spec["voc"]
-    panels_per_string = max_series
+    panels_per_string = max_series if max_series > 0 else 1
     num_strings = math.ceil(num_panels / panels_per_string)
     string_volt = panels_per_string * p_spec["vmp"]
 
@@ -168,7 +168,6 @@ for idx, key in enumerate(building_keys):
     with col:
         if st.button(key, key=f"b_{idx}", use_container_width=True):
             st.session_state.selected_building = key
-            st.rerun()
 
 if 'selected_building' not in st.session_state:
     st.session_state.selected_building = "🏠 منزل"
@@ -176,6 +175,8 @@ selected = st.session_state.selected_building
 load_kw_default = BUILDING_PRESETS[selected]["kw"]
 
 mode = st.radio("اختر الوضع:", ["بيع مباشر", "مستثمر", "ايجار منتهي بالتمليك 3 سنة"], horizontal=True)
+
+lease = None # تعريف مهم عشان ما يقع
 
 with st.form("calc_form"):
     st.markdown("---")
@@ -251,13 +252,15 @@ if submitted:
             st.success("✅ تمت اضافة الطلبية للسلة")
 
     with tab3:
-        if mode == "ايجار منتهي بالتمليك 3 سنة":
+        if mode == "ايجار منتهي بالتمليك 3 سنة" and lease:
             st.markdown("### 📄 عقد الايجار المنتهي بالتمليك")
             col1,col2,col3 = st.columns(3)
             col1.metric("القسط الشهري", f"${lease['القسط الشهري']:,}")
             col2.metric("المدة", lease['مدة الايجار'])
             col3.metric("اجمالي العقد", f"${lease['اجمالي العقد']:,}")
             st.success(lease['نقل الملكية'])
+        else:
+            st.info("اختر وضع الايجار لحساب الاقساط")
 
     with tab4:
         st.write(f"**فولت السلسلة:** {data['string_volt']}V")
