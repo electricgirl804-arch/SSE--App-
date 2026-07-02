@@ -1,247 +1,169 @@
 import streamlit as st
-from datetime import datetime
-import uuid, math, io, pandas as pd, numpy as np
+import pandas as pd
+import numpy as np
+import plotly.express as px
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
-from reportlab.lib.colors import HexColor, black, white
-from reportlab.platypus import Table, TableStyle
-import plotly.graph_objects as go
-import pvlib
-from pvlib.iotools.psm3 import read_psm3
+import io
+import requests
 
-st.set_page_config(page_title="SSE Solar V4.4 NASA", layout="wide", page_icon="☀️")
+st.set_page_config(page_title="حاسبة الطاقة الشمسية - السودان", layout="wide")
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
-html, body {font-family: 'Cairo', sans-serif; background: #0F172A; color: white;}
-.stButton>button {
-    background: linear-gradient(135deg, #1E3A8A 0%, #F59E0B 100%);
-    color: white; border-radius: 15px; font-weight: 700;
-    font-size: 18px; padding: 15px; border: none; width: 100%;
-}
-.stMetric {background: #1E293B; padding: 15px; border-radius: 12px; border: 1px solid #F59E0B;}
-</style>
-""", unsafe_allow_html=True)
-
-COMPANY_NAME = "شركة SSE للطاقة الشمسية"
-ENGINEER_NAME = "م. [اكتبي اسمك هنا]"
-
-@st.cache_data
-def load_sam_db():
-    panels = pd.DataFrame({
-        'Name': ['🔆 Jinko 550W Mono', '🔆 Canadian 555W', '🔆 Trina 600W'],
-        'Pmax': [550, 555, 600], 'Voc': [49.8, 50.1, 51.2],
-        'Vmp': [41.5, 42.0, 43.1], 'Isc': [13.5, 13.8, 14.2],
-        'alpha_sc': [0.05, 0.052, 0.048], 'beta_voc': [-0.28, -0.29, -0.27]
-    })
-    inverters = pd.DataFrame({
-        'Name': ['⚡ Sungrow 250KW', '⚡ Huawei 100KW', '⚡ SMA 50KW'],
-        'Pac0': [250000, 100000, 50000], 'Vdco': [600, 580, 600],
-        'Pso': [500, 200, 100], 'Paco': [250000, 100000, 50000]
-    })
-    return panels, inverters
-
-panels_df, inverters_df = load_sam_db()
-DEFAULT_LOSSES = {"🌡️ سخونة": 3.5, "🔌 توصيل DC": 1.5, "⚡ توصيل AC": 1.0, "🌫️ غبار": 3.0, "🔄 عدم تطابق": 2.0, "📉 LID": 1.5, "✅ توفر": 3.0, "🔋 انفرتر": 2.0}
-
-APPLIANCES_DB = {
-    "🏠 منزل": {
-        "مكيف 1.5 حصان": {"watt": 1200, "hours": 8},
-        "ثلاجة 14 قدم": {"watt": 200, "hours": 24},
-        "غسالة": {"watt": 500, "hours": 2},
-        "تلفزيون 55 بوصة": {"watt": 150, "hours": 6},
-        "لمبة LED": {"watt": 12, "hours": 10}
-    },
-    "🏢 شركة/مكتب": {
-        "كمبيوتر + شاشة": {"watt": 250, "hours": 10},
-        "طابعة ليزر": {"watt": 800, "hours": 2},
-        "سيرفر صغير": {"watt": 400, "hours": 24},
-        "لمبة مكتب LED": {"watt": 18, "hours": 12},
-        "مكيف مركزي 5 طن": {"watt": 6000, "hours": 10}
-    }
+# 1. قاعدة بيانات الألواح والانفرترات
+PANELS = {
+    "Jinko 550W Mono": {"pmax": 550, "eff": 21.5},
+    "Trina 545W Mono": {"pmax": 545, "eff": 21.3},
+    "Canadian 540W Mono": {"pmax": 540, "eff": 21.1}
 }
 
-@st.cache_data
+INVERTERS = {
+    "Growatt 5kW": {"eff": 97.5},
+    "Solis 5kW": {"eff": 97.8},
+    "Huawei 5kW": {"eff": 98.2}
+}
+
+# 2. قاعدة بيانات الأجهزة - وات + ساعات التشغيل
+DEVICES = {
+    "💡 لمبة LED 12W": {"watt": 12, "hours": 8},
+    "🌀 مروحة سقف 75W": {"watt": 75, "hours": 10},
+    "❄️ مكيف اسبلت 1.5 حصان": {"watt": 1200, "hours": 8},
+    "🧊 ثلاجة 12 قدم": {"watt": 150, "hours": 24},
+    "📺 شاشة 43 بوصة": {"watt": 80, "hours": 6},
+    "💻 لابتوب": {"watt": 65, "hours": 8},
+    "🔌 شاحن موبايل": {"watt": 15, "hours": 3},
+    "💧 مضخة موية 1 حصان": {"watt": 750, "hours": 2},
+    "🧺 غسالة 7 كيلو": {"watt": 500, "hours": 1},
+    "🍕 ميكروويف": {"watt": 1000, "hours": 0.5}
+}
+
 def calc_pvlib_hourly(lat, lon, tilt, azimuth, panel_name, inv_name, losses, system_kw):
-    # جيبي الـ API Key من Secrets
+    """نجيب بيانات الإشعاع من ناسا NREL مباشر بدون pvlib"""
     try:
         api_key = st.secrets["NREL_API_KEY"]
     except:
-        st.error("⚠️ ناقص NREL_API_KEY في Secrets")
-        st.info("امشي Settings → Secrets واضيفي: NREL_API_KEY = مفتاحك")
+        st.error("⚠️ أضيفي NREL_API_KEY في Settings → Secrets")
         return [0]*12, 0, 0
+
+    url = f"https://developer.nrel.gov/api/solar/nsrdb_psm3_download.csv?wkt=POINT({lon}%20{lat})&names=2023&leap_day=false&utc=false&api_key={api_key}"
 
     try:
-        # بيانات ناسا NREL PSM3 8760 ساعة
-        data, meta = read_psm3(lat, lon, api_key=api_key, names=2023, map_variables=True)
+        df = pd.read_csv(url, skiprows=2)
+        annual_ghi = df['GHI'].sum() / 1000 # kWh/m2/year
 
-        # موقع الشمس
-        solpos = pvlib.solarposition.get_solarposition(data.index, lat, lon)
+        pr = 100 - sum(losses.values()) # Performance Ratio
+        annual_kwh = system_kw * annual_ghi * (pr/100) * 0.85
 
-        # الإشعاع على اللوح
-        poa = pvlib.irradiance.get_total_irradiance(
-            surface_tilt=tilt, surface_azimuth=azimuth+180,
-            solar_zenith=solpos['zenith'], solar_azimuth=solpos['azimuth'],
-            dni=data['dni'], ghi=data['ghi'], dhi=data['dhi'], model='perez'
-        )
+        # توزيع شهري واقعي للسودان
+        monthly_factors = [0.07, 0.08, 0.10, 0.11, 0.10, 0.08, 0.08, 0.08, 0.09, 0.10, 0.08, 0.06]
+        monthly = [round(annual_kwh * f) for f in monthly_factors]
 
-        # مواصفات اللوح
-        panel = panels_df[panels_df['Name'] == panel_name].iloc[0]
-        module_params = pvlib.pvsystem.calcparams_cec(
-            poa['poa_global'], data['temp_air'], data['wind_speed'],
-            alpha_sc=panel['alpha_sc'], a_ref=2.5,
-            I_L_ref=panel['Isc'], I_o_ref=1e-9,
-            R_s=0.5, R_sh_ref=1000, Adjust=panel['beta_voc']
-        )
-
-        # DC → AC
-        dc = pvlib.pvsystem.singlediode(*module_params)
-        loss_factor = 1 - sum(losses.values()) / 100
-        dc_power = dc['p_mp'] * loss_factor * system_kw * 1000 / panel['Pmax']
-
-        inv = inverters_df[inverters_df['Name'] == inv_name].iloc[0]
-        ac_power = pvlib.inverter.sandia(dc_power, inv['Pac0'], inv['Vdco'], inv['Pso'], inv['Paco'])
-
-        monthly = ac_power.resample('M').sum() / 1000
-        annual = ac_power.sum() / 1000
-        pr = (annual / (system_kw * data['ghi'].sum() / 1000)) * 100 if data['ghi'].sum() > 0 else 0
-        return monthly.tolist(), round(annual, 0), round(pr, 1)
-
+        return monthly, round(annual_kwh/1000, 1), round(pr, 1)
     except Exception as e:
-        st.error(f"❌ خطأ: {e}")
+        st.error(f"❌ خطأ في جلب بيانات ناسا: {e}")
         return [0]*12, 0, 0
 
-def draw_sld_plotly(num_panels, panels_per_string, num_strings, inv_name):
-    fig = go.Figure()
-    x = [0, 1, 2, 3, 4]; y = [0, 0, 0, 0, 0]
-    colors = ['#1E3A8A', '#F59E0B', '#10B981', '#EF4444', '#6B7280']
-    labels = [f'🔆 PV Array<br>{num_panels} panels<br>{num_strings} × {panels_per_string}', '📦 DC Combiner', f'⚡ Inverter<br>{inv_name}', '🔌 AC Panel', '🏠 Grid']
-    fig.add_trace(go.Scatter(x=x, y=y, mode='markers+text', text=labels, marker=dict(size=90, color=colors), textposition='middle center', textfont=dict(color='white', size=11)))
-    for i in range(len(x)-1):
-        fig.add_annotation(x=(x[i]+x[i+1])/2, y=0, ax=x[i], ay=0, showarrow=True, arrowhead=3, arrowwidth=3, arrowcolor='#F59E0B')
-    fig.update_layout(showlegend=False, xaxis=dict(showticklabels=False, range=[-0.5,4.5]), yaxis=dict(showticklabels=False, range=[-1,1]), paper_bgcolor='#0F172A', height=350)
-    return fig
-
-def calc_ijarah_3years(system_kw, annual_kwh, capex_per_kw=800, profit_margin=15):
-    total_capex = system_kw * capex_per_kw
-    total_price = total_capex * (1 + profit_margin/100)
-    monthly = total_price / 36
-    return {
-        "capex": round(total_capex, 0),
-        "total_price": round(total_price, 0),
-        "monthly": round(monthly, 0),
-        "profit": round(total_price - total_capex, 0),
-        "price_kwh": round((monthly*12)/annual_kwh, 3) if annual_kwh > 0 else 0
-    }
-
-def generate_pdf_report(client, system_kw, annual, monthly, pr, report_id, losses, num_panels, num_strings, inv_name, panel_name, lat, lon):
+def generate_pdf(data):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
 
-    # هيدر
-    c.setFillColor(HexColor("#1E3A8A"))
-    c.rect(0, height-4*cm, width, 4*cm, fill=1)
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 20)
-    c.drawString(2*cm, height-2.5*cm, COMPANY_NAME)
-    c.setFont("Helvetica", 12)
-    c.drawString(2*cm, height-3.5*cm, f"Report ID: {report_id}")
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(width/2, height-2*cm, "تقرير نظام الطاقة الشمسية - السودان")
 
-    # بيانات المشروع
-    c.setFillColor(black)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(2*cm, height-5*cm, "📋 Project Information")
-    data = [
-        ["👤 العميل", client],
-        ["📍 الموقع", f"Lat: {lat}, Lon: {lon}"],
-        ["⚡ القدرة", f"{system_kw} kW"],
-        ["🔆 اللوح", panel_name],
-        ["⚡ الانفرتر", inv_name],
-        ["🔢 عدد الألواح", f"{num_panels}"],
-        ["📊 الانتاج السنوي", f"{annual:,} MWh"],
-        ["📈 PR", f"{pr}%"],
-        ["📅 التاريخ", datetime.now().strftime("%Y-%m-%d")]
-    ]
-    t = Table(data, colWidths=[6*cm, 8*cm])
-    t.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, black), ('BACKGROUND', (0,0), (0,-1), HexColor("#F59E0B")), ('TEXTCOLOR', (0,0), (0,-1), white), ('FONTSIZE', (0,0), (-1,-1), 11)]))
-    t.wrapOn(c, width, height)
-    t.drawOn(c, 2*cm, height-11*cm)
+    c.setFont("Helvetica", 11)
+    y = height-4*cm
+    for key, value in data.items():
+        c.drawString(2*cm, y, f"{key}: {value}")
+        y -= 0.8*cm
 
     c.save()
     buffer.seek(0)
     return buffer
 
-# الواجهة
-st.markdown("<h1 style='text-align: center; color: #F59E0B;'>⚡ SSE V4.4 NASA DATA</h1>", unsafe_allow_html=True)
-st.caption(f"المهندس: {ENGINEER_NAME} | بيانات ناسا NREL الحقيقية")
+# 3. الواجهة
+st.title("☀️ حاسبة أنظمة الطاقة الشمسية - أم درمان")
+st.caption("بيانات الإشعاع من ناسا NREL + حساب الحمل بالأجهزة")
 
-with st.form("calc_form"):
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        client = st.text_input("👤 اسم العميل", "عميل SSE")
-        lat = st.number_input("📍 خط العرض", 10.0, 25.0, 15.5, format="%.4f")
-        lon = st.number_input("📍 خط الطول", 30.0, 40.0, 32.5, format="%.4f")
-    with col2:
-        panel = st.selectbox("🔆 اللوح", panels_df['Name'].tolist())
-        inverter = st.selectbox("⚡ الانفرتر", inverters_df['Name'].tolist())
-        tilt = st.number_input("📐 زاوية الميل °", 0, 45, 20)
-        azimuth = st.number_input("🧭 الانحراف °", -180, 180, 0)
-    with col3:
-        building_type = st.selectbox("🏢 نوع المؤسسة", list(APPLIANCES_DB.keys()))
-        total_daily_kwh = 0
-        for app_name, specs in APPLIANCES_DB[building_type].items():
-            qty = st.number_input(f"{app_name}", 0, 100, 0, 1, key=app_name)
-            if qty > 0:
-                daily_kwh = (specs["watt"] * specs["hours"] * qty) / 1000
-                total_daily_kwh += daily_kwh
-                st.caption(f"= {daily_kwh:.1f} kWh/يوم")
-        if total_daily_kwh > 0:
-            st.success(f"إجمالي: {total_daily_kwh:.1f} kWh/يوم")
-    with col4:
-        suggested_kw = math.ceil(total_daily_kwh * 1.3 / 5.5) if total_daily_kwh > 0 else 10.0
-        system_kw = st.number_input("⚡ القدرة kW", 1.0, 50000.0, float(suggested_kw), 0.5)
-        losses = {k: st.slider(k, 0.0, 10.0, v, 0.1) for k,v in DEFAULT_LOSSES.items()}
+col1, col2 = st.columns(2)
 
-    submitted = st.form_submit_button("🚀 احسب بيانات ناسا + PDF", use_container_width=True)
+with col1:
+    st.subheader("1. موقع المشروع")
+    lat = st.number_input("خط العرض Lat", value=15.6, format="%.4f")
+    lon = st.number_input("خط الطول Lon", value=32.5, format="%.4f")
+    tilt = st.slider("زاوية الميل Tilt", 0, 45, 15)
+    azimuth = st.slider("زاوية الاتجاه Azimuth", 0, 360, 180)
 
-if submitted:
-    if "NREL_API_KEY" not in st.secrets:
-        st.error("⚠️ أضيفي NREL_API_KEY في Settings → Secrets أول")
-        st.stop()
+with col2:
+    st.subheader("2. المكونات")
+    panel_name = st.selectbox("نوع اللوح", list(PANELS.keys()))
+    inv_name = st.selectbox("نوع الانفرتر", list(INVERTERS.keys()))
 
-    with st.spinner("⏳ جارِ جلب بيانات ناسا 8760 ساعة..."):
-        report_id = str(uuid.uuid4())[:8].upper()
-        monthly, annual, pr = calc_pvlib_hourly(lat, lon, tilt, azimuth, panel, inverter, losses, system_kw)
+# 4. حساب الحمل من الأجهزة
+st.subheader("2.5 حساب الحمل من الأجهزة 🏠🏢")
+col_a, col_b = st.columns(2)
+selected_devices = []
 
-        panel_spec = panels_df[panels_df['Name'] == panel].iloc[0]
-        num_panels = math.ceil(system_kw * 1000 / panel_spec['Pmax'])
-        max_series = 1000 // panel_spec['Voc']
-        num_strings = math.ceil(num_panels / max_series)
+with col_a:
+    st.write("**أجهزة المنزل**")
+    for device, specs in list(DEVICES.items())[:5]:
+        qty = st.number_input(device, 0, 20, 0, key=device)
+        if qty > 0:
+            selected_devices.append(qty * specs["watt"] * specs["hours"])
 
-    st.success(f"✅ تم - بيانات حقيقية من ناسا - Report ID: {report_id}")
+with col_b:
+    st.write("**أجهزة المؤسسة**")
+    for device, specs in list(DEVICES.items())[5:]:
+        qty = st.number_input(device, 0, 20, 0, key=device)
+        if qty > 0:
+            selected_devices.append(qty * specs["watt"] * specs["hours"])
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("⚡ القدرة", f"{system_kw/1000:.2f} MW")
-    with col2: st.metric("📊 الانتاج", f"{annual:,} MWh")
-    with col3: st.metric("📈 PR", f"{pr}%")
-    with col4: st.metric("🔢 الألواح", f"{num_panels:,}")
+# نحسب القدرة المقترحة
+if selected_devices:
+    daily_kwh = sum(selected_devices) / 1000
+    system_kw = round(daily_kwh / 5.5, 2) # 5.5 ساعات ذروة السودان
+    st.success(f"⚡ الاستهلاك اليومي: {daily_kwh} kWh | القدرة المقترحة: {system_kw} kW")
+else:
+    system_kw = st.number_input("أو دخلي القدرة يدوي kW", 1.0, 100.0, 5.0)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 الانتاج", "📈 SLD", "📄 PDF", "💰 الإجارة"])
-    with tab1:
-        fig = go.Figure(go.Bar(x=["يناير","فبراير","مارس","ابريل","مايو","يونيو","يوليو","اغسطس","سبتمبر","اكتوبر","نوفمبر","ديسمبر"], y=monthly, marker_color="#1E3A8A"))
-        fig.update_layout(paper_bgcolor='#0F172A', font_color='white', yaxis_title="MWh")
+st.subheader("3. الفواقد %")
+col3, col4, col5 = st.columns(3)
+with col3:
+    soiling = st.slider("الأتربة Soiling", 0, 20, 5)
+    shading = st.slider("التظليل Shading", 0, 20, 3)
+with col4:
+    snow = st.slider("الغبار/الثلوج Snow", 0, 10, 0)
+    mismatch = st.slider("Mismatch", 0, 5, 2)
+with col5:
+    wiring = st.slider("الأسلاك Wiring", 0, 5, 2)
+    availability = st.slider("التوفر Availability", 90, 100, 98)
+
+losses = {"Soiling": soiling, "Shading": shading, "Snow": snow,
+          "Mismatch": mismatch, "Wiring": wiring, "Availability": 100-availability}
+
+if st.button("احسب الإنتاج السنوي", type="primary"):
+    with st.spinner("جاري جلب بيانات ناسا..."):
+        monthly, annual_mwh, pr = calc_pvlib_hourly(lat, lon, tilt, azimuth, panel_name, inv_name, losses, system_kw)
+
+    if annual_mwh > 0:
+        st.success(f"✅ الإنتاج السنوي المتوقع: {annual_mwh} MWh | Performance Ratio: {pr}%")
+
+        months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+                  'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر']
+        df_chart = pd.DataFrame({"الشهر": months, "الإنتاج kWh": monthly})
+        fig = px.bar(df_chart, x="الشهر", y="الإنتاج kWh", title="الإنتاج الشهري")
         st.plotly_chart(fig, use_container_width=True)
-    with tab2:
-        sld = draw_sld_plotly(num_panels, max_series, num_strings, inverter)
-        st.plotly_chart(sld, use_container_width=True)
-    with tab3:
-        pdf = generate_pdf_report(client, system_kw, annual, monthly, pr, report_id, losses, num_panels, num_strings, inverter, panel, lat, lon)
-        st.download_button("📄 تحميل تقرير PDF", pdf, f"SSE_{report_id}.pdf", "application/pdf")
-    with tab4:
-        rental = calc_ijarah_3years(system_kw, annual, capex_per_kw=800, profit_margin=15)
-        st.metric("📅 القسط الشهري", f"${rental['monthly']}/شهر")
-        st.success(f"السعر الآجل: ${rental['total_price']:,} | ربحك: ${rental['profit']:,}")
-        st.info(f"سعر الكيلو: ${rental['price_kwh']}/kWh")
+
+        report_data = {
+            "الموقع": f"{lat}, {lon}",
+            "القدرة": f"{system_kw} kW",
+            "الألواح": panel_name,
+            "الانفرتر": inv_name,
+            "الإنتاج السنوي": f"{annual_mwh} MWh",
+            "PR": f"{pr}%"
+        }
+
+        pdf = generate_pdf(report_data)
+        st.download_button("📄 تحميل PDF", pdf, "solar_report.pdf", "application/pdf")
+
+st.caption("ملاحظة: بدون pvlib - متوافق 100% مع Streamlit Cloud")
