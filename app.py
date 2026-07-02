@@ -8,9 +8,9 @@ from reportlab.lib.colors import HexColor, black, white
 from reportlab.platypus import Table, TableStyle
 import plotly.graph_objects as go
 import pvlib
-from pvlib.iotools import get_psm3
+from pvlib.iotools.psm3 import read_psm3 # ← دا التعديل المهم
 
-st.set_page_config(page_title="SSE Solar V4.3 PRO", layout="wide", page_icon="☀️")
+st.set_page_config(page_title="SSE Solar V4.4 NASA", layout="wide", page_icon="☀️")
 
 st.markdown("""
 <style>
@@ -64,22 +64,47 @@ APPLIANCES_DB = {
 
 @st.cache_data
 def calc_pvlib_hourly(lat, lon, tilt, azimuth, panel_name, inv_name, losses, system_kw):
+    # نجيب الـ API Key من Secrets حق Streamlit
+    api_key = st.secrets["NREL_API_KEY"]
+
     try:
-        data, meta = get_psm3(lat, lon, api_key='DEMO_KEY', start=2023, end=2023)
+        # بيانات ناسا NREL الحقيقية 8760 ساعة
+        data, meta = read_psm3(lat, lon, api_key=api_key, names=2023)
+
+        # حساب موقع الشمس
         solpos = pvlib.solarposition.get_solarposition(data.index, lat, lon)
-        poa = pvlib.irradiance.get_total_irradiance(surface_tilt=tilt, surface_azimuth=azimuth+180, solar_zenith=solpos['zenith'], solar_azimuth=solpos['azimuth'], dni=data['DNI'], ghi=data['GHI'], dhi=data['DHI'], model='perez')
+
+        # حساب الإشعاع على اللوح
+        poa = pvlib.irradiance.get_total_irradiance(
+            surface_tilt=tilt, surface_azimuth=azimuth+180,
+            solar_zenith=solpos['zenith'], solar_azimuth=solpos['azimuth'],
+            dni=data['DNI'], ghi=data['GHI'], dhi=data['DHI'], model='perez'
+        )
+
+        # مواصفات اللوح
         panel = panels_df[panels_df['Name'] == panel_name].iloc[0]
-        module_params = pvlib.pvsystem.calcparams_cec(poa['poa_global'], data['T2M'], data['WS2M'], alpha_sc=panel['alpha_sc'], a_ref=2.5, I_L_ref=panel['Isc'], I_o_ref=1e-9, R_s=0.5, R_sh_ref=1000, Adjust=panel['beta_voc'])
+        module_params = pvlib.pvsystem.calcparams_cec(
+            poa['poa_global'], data['T2M'], data['WS2M'],
+            alpha_sc=panel['alpha_sc'], a_ref=2.5,
+            I_L_ref=panel['Isc'], I_o_ref=1e-9,
+            R_s=0.5, R_sh_ref=1000, Adjust=panel['beta_voc']
+        )
+
+        # DC → AC
         dc = pvlib.pvsystem.singlediode(*module_params)
         dc_power = dc['p_mp'] * (1 - sum(losses.values()) / 100)
         inv = inverters_df[inverters_df['Name'] == inv_name].iloc[0]
         ac_power = pvlib.inverter.sandia(dc_power, inv['Pac0'], inv['Vdco'], inv['Pso'], inv['Paco'])
+
         monthly = ac_power.resample('M').sum() / 1000
         annual = ac_power.sum() / 1000
         pr = annual / (system_kw * 8760 / 1000) * 100
         return monthly.tolist(), round(annual, 0), round(pr, 1)
-    except:
-        return [500]*12, 6000, 82.5
+
+    except Exception as e:
+        st.error(f"❌ خطأ في بيانات ناسا: {e}")
+        st.info("تأكدي انك دخلتي API Key صحيح في Secrets")
+        return [0]*12, 0, 0
 
 def draw_sld_plotly(num_panels, panels_per_string, num_strings, inv_name):
     fig = go.Figure()
@@ -125,7 +150,7 @@ def generate_pdf_report(client, system_kw, annual, monthly, pr, report_id, losse
     buffer.seek(0)
     return buffer
 
-st.markdown("<h1 style='text-align: center; color: #F59E0B;'>⚡ SSE V4.3 PRO</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #F59E0B;'>⚡ SSE V4.4 NASA DATA</h1>", unsafe_allow_html=True)
 
 with st.form("calc_form"):
     col1, col2, col3, col4 = st.columns(4)
@@ -154,10 +179,15 @@ with st.form("calc_form"):
         system_kw = st.number_input("⚡ القدرة KW", 1.0, 50000.0, float(suggested_kw), 0.5)
         losses = {k: st.slider(k, 0.0, 10.0, float(abs(v)), 0.1) for k,v in DEFAULT_LOSSES.items()}
 
-    submitted = st.form_submit_button("🚀 احسب + تقرير PDF", use_container_width=True)
+    submitted = st.form_submit_button("🚀 احسب بيانات ناسا + PDF", use_container_width=True)
 
 if submitted:
-    with st.spinner("⏳ جارِ المحاكاة..."):
+    # نتأكد الـ API Key موجود
+    if "NREL_API_KEY" not in st.secrets:
+        st.error("⚠️ ناقص API Key! شوفي الخطوة الجاية تحت 👇")
+        st.stop()
+
+    with st.spinner("⏳ جارِ جلب بيانات ناسا 8760 ساعة..."):
         report_id = str(uuid.uuid4())[:8].upper()
         monthly, annual, pr = calc_pvlib_hourly(lat, lon, tilt, azimuth, panel, inverter, losses, system_kw)
         panel_spec = panels_df[panels_df['Name'] == panel].iloc[0]
@@ -165,7 +195,7 @@ if submitted:
         max_series = 1000 // panel_spec['Voc']
         num_strings = math.ceil(num_panels / max_series)
 
-    st.success(f"✅ تم - Report ID: {report_id}")
+    st.success(f"✅ تم - بيانات حقيقية من ناسا - Report ID: {report_id}")
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("⚡ القدرة", f"{system_kw/1000:.2f} MW")
     with col2: st.metric("📊 الانتاج", f"{annual:,} MWh")
