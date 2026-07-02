@@ -1,8 +1,7 @@
-streamlit==1.39.0
-pandas==2.2.2
+streamlit==1.32.0
+pandas==2.2.0
 numpy==1.26.4
-plotly==5.24.1
-pvlib==0.11.1
-reportlab==4.2.2
-graphviz==0.21
-requests==2.32.3
+plotly==5.18.0
+pvlib==0.10.3
+reportlab==4.0.9
+requests==2.31.0
