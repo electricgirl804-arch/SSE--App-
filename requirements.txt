@@ -2,6 +2,7 @@ streamlit
 pandas
 numpy
 plotly
-pvlib
+pvlib>=0.11.0
 reportlab
 pillow
+requests
