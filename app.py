@@ -8,7 +8,7 @@ from reportlab.lib.colors import HexColor, black, white
 from reportlab.platypus import Table, TableStyle
 import plotly.graph_objects as go
 import pvlib
-from pvlib.iotools.psm3 import read_psm3 # ← دا التعديل المهم
+from pvlib.iotools.psm3 import read_psm3
 
 st.set_page_config(page_title="SSE Solar V4.4 NASA", layout="wide", page_icon="☀️")
 
@@ -21,6 +21,7 @@ html, body {font-family: 'Cairo', sans-serif; background: #0F172A; color: white;
     color: white; border-radius: 15px; font-weight: 700;
     font-size: 18px; padding: 15px; border: none; width: 100%;
 }
+.stMetric {background: #1E293B; padding: 15px; border-radius: 12px; border: 1px solid #F59E0B;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -43,7 +44,7 @@ def load_sam_db():
     return panels, inverters
 
 panels_df, inverters_df = load_sam_db()
-DEFAULT_LOSSES = {"🌡️ سخونة": -0.35, "🔌 توصيل DC": 1.5, "⚡ توصيل AC": 1.0, "🌫️ غبار": 3.0, "🔄 عدم تطابق": 2.0, "📉 LID": 1.5, "✅ توفر": 3.0, "🔋 انفرتر": 2.0}
+DEFAULT_LOSSES = {"🌡️ سخونة": 3.5, "🔌 توصيل DC": 1.5, "⚡ توصيل AC": 1.0, "🌫️ غبار": 3.0, "🔄 عدم تطابق": 2.0, "📉 LID": 1.5, "✅ توفر": 3.0, "🔋 انفرتر": 2.0}
 
 APPLIANCES_DB = {
     "🏠 منزل": {
@@ -64,27 +65,32 @@ APPLIANCES_DB = {
 
 @st.cache_data
 def calc_pvlib_hourly(lat, lon, tilt, azimuth, panel_name, inv_name, losses, system_kw):
-    # نجيب الـ API Key من Secrets حق Streamlit
-    api_key = st.secrets["NREL_API_KEY"]
+    # جيبي الـ API Key من Secrets
+    try:
+        api_key = st.secrets["NREL_API_KEY"]
+    except:
+        st.error("⚠️ ناقص NREL_API_KEY في Secrets")
+        st.info("امشي Settings → Secrets واضيفي: NREL_API_KEY = مفتاحك")
+        return [0]*12, 0, 0
 
     try:
-        # بيانات ناسا NREL الحقيقية 8760 ساعة
-        data, meta = read_psm3(lat, lon, api_key=api_key, names=2023)
+        # بيانات ناسا NREL PSM3 8760 ساعة
+        data, meta = read_psm3(lat, lon, api_key=api_key, names=2023, map_variables=True)
 
-        # حساب موقع الشمس
+        # موقع الشمس
         solpos = pvlib.solarposition.get_solarposition(data.index, lat, lon)
 
-        # حساب الإشعاع على اللوح
+        # الإشعاع على اللوح
         poa = pvlib.irradiance.get_total_irradiance(
             surface_tilt=tilt, surface_azimuth=azimuth+180,
             solar_zenith=solpos['zenith'], solar_azimuth=solpos['azimuth'],
-            dni=data['DNI'], ghi=data['GHI'], dhi=data['DHI'], model='perez'
+            dni=data['dni'], ghi=data['ghi'], dhi=data['dhi'], model='perez'
         )
 
         # مواصفات اللوح
         panel = panels_df[panels_df['Name'] == panel_name].iloc[0]
         module_params = pvlib.pvsystem.calcparams_cec(
-            poa['poa_global'], data['T2M'], data['WS2M'],
+            poa['poa_global'], data['temp_air'], data['wind_speed'],
             alpha_sc=panel['alpha_sc'], a_ref=2.5,
             I_L_ref=panel['Isc'], I_o_ref=1e-9,
             R_s=0.5, R_sh_ref=1000, Adjust=panel['beta_voc']
@@ -92,18 +98,19 @@ def calc_pvlib_hourly(lat, lon, tilt, azimuth, panel_name, inv_name, losses, sys
 
         # DC → AC
         dc = pvlib.pvsystem.singlediode(*module_params)
-        dc_power = dc['p_mp'] * (1 - sum(losses.values()) / 100)
+        loss_factor = 1 - sum(losses.values()) / 100
+        dc_power = dc['p_mp'] * loss_factor * system_kw * 1000 / panel['Pmax']
+
         inv = inverters_df[inverters_df['Name'] == inv_name].iloc[0]
         ac_power = pvlib.inverter.sandia(dc_power, inv['Pac0'], inv['Vdco'], inv['Pso'], inv['Paco'])
 
         monthly = ac_power.resample('M').sum() / 1000
         annual = ac_power.sum() / 1000
-        pr = annual / (system_kw * 8760 / 1000) * 100
+        pr = (annual / (system_kw * data['ghi'].sum() / 1000)) * 100 if data['ghi'].sum() > 0 else 0
         return monthly.tolist(), round(annual, 0), round(pr, 1)
 
     except Exception as e:
-        st.error(f"❌ خطأ في بيانات ناسا: {e}")
-        st.info("تأكدي انك دخلتي API Key صحيح في Secrets")
+        st.error(f"❌ خطأ: {e}")
         return [0]*12, 0, 0
 
 def draw_sld_plotly(num_panels, panels_per_string, num_strings, inv_name):
@@ -114,7 +121,7 @@ def draw_sld_plotly(num_panels, panels_per_string, num_strings, inv_name):
     fig.add_trace(go.Scatter(x=x, y=y, mode='markers+text', text=labels, marker=dict(size=90, color=colors), textposition='middle center', textfont=dict(color='white', size=11)))
     for i in range(len(x)-1):
         fig.add_annotation(x=(x[i]+x[i+1])/2, y=0, ax=x[i], ay=0, showarrow=True, arrowhead=3, arrowwidth=3, arrowcolor='#F59E0B')
-    fig.update_layout(showlegend=False, xaxis=dict(showticklabels=False), yaxis=dict(showticklabels=False), paper_bgcolor='#0F172A', height=350)
+    fig.update_layout(showlegend=False, xaxis=dict(showticklabels=False, range=[-0.5,4.5]), yaxis=dict(showticklabels=False, range=[-1,1]), paper_bgcolor='#0F172A', height=350)
     return fig
 
 def calc_ijarah_3years(system_kw, annual_kwh, capex_per_kw=800, profit_margin=15):
@@ -129,28 +136,47 @@ def calc_ijarah_3years(system_kw, annual_kwh, capex_per_kw=800, profit_margin=15
         "price_kwh": round((monthly*12)/annual_kwh, 3) if annual_kwh > 0 else 0
     }
 
-def generate_pdf_report(client, system_kw, annual, monthly, pr, report_id, losses, num_panels, num_strings, inv_name, panel_name):
+def generate_pdf_report(client, system_kw, annual, monthly, pr, report_id, losses, num_panels, num_strings, inv_name, panel_name, lat, lon):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
+
+    # هيدر
     c.setFillColor(HexColor("#1E3A8A"))
     c.rect(0, height-4*cm, width, 4*cm, fill=1)
     c.setFillColor(white)
     c.setFont("Helvetica-Bold", 20)
     c.drawString(2*cm, height-2.5*cm, COMPANY_NAME)
+    c.setFont("Helvetica", 12)
+    c.drawString(2*cm, height-3.5*cm, f"Report ID: {report_id}")
+
+    # بيانات المشروع
     c.setFillColor(black)
     c.setFont("Helvetica-Bold", 14)
     c.drawString(2*cm, height-5*cm, "📋 Project Information")
-    data = [["👤 العميل", client], ["⚡ القدرة", f"{system_kw} kW"], ["🔆 اللوح", panel_name], ["⚡ الانفرتر", inv_name], ["🔢 عدد الألواح", f"{num_panels}"], ["📊 الانتاج", f"{annual:,} MWh"], ["📈 PR", f"{pr}%"], ["🆔 ID", report_id]]
+    data = [
+        ["👤 العميل", client],
+        ["📍 الموقع", f"Lat: {lat}, Lon: {lon}"],
+        ["⚡ القدرة", f"{system_kw} kW"],
+        ["🔆 اللوح", panel_name],
+        ["⚡ الانفرتر", inv_name],
+        ["🔢 عدد الألواح", f"{num_panels}"],
+        ["📊 الانتاج السنوي", f"{annual:,} MWh"],
+        ["📈 PR", f"{pr}%"],
+        ["📅 التاريخ", datetime.now().strftime("%Y-%m-%d")]
+    ]
     t = Table(data, colWidths=[6*cm, 8*cm])
-    t.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, black), ('BACKGROUND', (0,0), (0,-1), HexColor("#F59E0B"))]))
+    t.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, black), ('BACKGROUND', (0,0), (0,-1), HexColor("#F59E0B")), ('TEXTCOLOR', (0,0), (0,-1), white), ('FONTSIZE', (0,0), (-1,-1), 11)]))
     t.wrapOn(c, width, height)
     t.drawOn(c, 2*cm, height-11*cm)
+
     c.save()
     buffer.seek(0)
     return buffer
 
+# الواجهة
 st.markdown("<h1 style='text-align: center; color: #F59E0B;'>⚡ SSE V4.4 NASA DATA</h1>", unsafe_allow_html=True)
+st.caption(f"المهندس: {ENGINEER_NAME} | بيانات ناسا NREL الحقيقية")
 
 with st.form("calc_form"):
     col1, col2, col3, col4 = st.columns(4)
@@ -176,26 +202,27 @@ with st.form("calc_form"):
             st.success(f"إجمالي: {total_daily_kwh:.1f} kWh/يوم")
     with col4:
         suggested_kw = math.ceil(total_daily_kwh * 1.3 / 5.5) if total_daily_kwh > 0 else 10.0
-        system_kw = st.number_input("⚡ القدرة KW", 1.0, 50000.0, float(suggested_kw), 0.5)
-        losses = {k: st.slider(k, 0.0, 10.0, float(abs(v)), 0.1) for k,v in DEFAULT_LOSSES.items()}
+        system_kw = st.number_input("⚡ القدرة kW", 1.0, 50000.0, float(suggested_kw), 0.5)
+        losses = {k: st.slider(k, 0.0, 10.0, v, 0.1) for k,v in DEFAULT_LOSSES.items()}
 
     submitted = st.form_submit_button("🚀 احسب بيانات ناسا + PDF", use_container_width=True)
 
 if submitted:
-    # نتأكد الـ API Key موجود
     if "NREL_API_KEY" not in st.secrets:
-        st.error("⚠️ ناقص API Key! شوفي الخطوة الجاية تحت 👇")
+        st.error("⚠️ أضيفي NREL_API_KEY في Settings → Secrets أول")
         st.stop()
 
     with st.spinner("⏳ جارِ جلب بيانات ناسا 8760 ساعة..."):
         report_id = str(uuid.uuid4())[:8].upper()
         monthly, annual, pr = calc_pvlib_hourly(lat, lon, tilt, azimuth, panel, inverter, losses, system_kw)
+
         panel_spec = panels_df[panels_df['Name'] == panel].iloc[0]
         num_panels = math.ceil(system_kw * 1000 / panel_spec['Pmax'])
         max_series = 1000 // panel_spec['Voc']
         num_strings = math.ceil(num_panels / max_series)
 
     st.success(f"✅ تم - بيانات حقيقية من ناسا - Report ID: {report_id}")
+
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("⚡ القدرة", f"{system_kw/1000:.2f} MW")
     with col2: st.metric("📊 الانتاج", f"{annual:,} MWh")
@@ -205,15 +232,16 @@ if submitted:
     tab1, tab2, tab3, tab4 = st.tabs(["📊 الانتاج", "📈 SLD", "📄 PDF", "💰 الإجارة"])
     with tab1:
         fig = go.Figure(go.Bar(x=["يناير","فبراير","مارس","ابريل","مايو","يونيو","يوليو","اغسطس","سبتمبر","اكتوبر","نوفمبر","ديسمبر"], y=monthly, marker_color="#1E3A8A"))
-        fig.update_layout(paper_bgcolor='#0F172A', font_color='white')
+        fig.update_layout(paper_bgcolor='#0F172A', font_color='white', yaxis_title="MWh")
         st.plotly_chart(fig, use_container_width=True)
     with tab2:
         sld = draw_sld_plotly(num_panels, max_series, num_strings, inverter)
         st.plotly_chart(sld, use_container_width=True)
     with tab3:
-        pdf = generate_pdf_report(client, system_kw, annual, monthly, pr, report_id, losses, num_panels, num_strings, inverter, panel)
-        st.download_button("📄 تحميل PDF", pdf, f"SSE_{report_id}.pdf", "application/pdf")
+        pdf = generate_pdf_report(client, system_kw, annual, monthly, pr, report_id, losses, num_panels, num_strings, inverter, panel, lat, lon)
+        st.download_button("📄 تحميل تقرير PDF", pdf, f"SSE_{report_id}.pdf", "application/pdf")
     with tab4:
         rental = calc_ijarah_3years(system_kw, annual, capex_per_kw=800, profit_margin=15)
         st.metric("📅 القسط الشهري", f"${rental['monthly']}/شهر")
         st.success(f"السعر الآجل: ${rental['total_price']:,} | ربحك: ${rental['profit']:,}")
+        st.info(f"سعر الكيلو: ${rental['price_kwh']}/kWh")
