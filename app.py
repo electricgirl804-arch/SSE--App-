@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import pvlib
 from pvlib.iotools import get_psm3
 
-st.set_page_config(page_title="SSE Solar V4.2 FIXED", layout="wide")
+st.set_page_config(page_title="SSE Solar V4.2 FIXED", layout="wide", page_icon="☀️")
 
 st.markdown("""
 <style>
