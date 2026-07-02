@@ -4,3 +4,4 @@ numpy==1.26.3
 plotly==5.18.0
 pvlib==0.10.3
 reportlab==4.0.7
+pillow==10.2.0
