@@ -1,8 +1,7 @@
-streamlit==1.29.0
-pandas==2.1.4
-numpy==1.26.2
-plotly==5.18.0
-pvlib==0.10.4
-reportlab==4.0.7
-pillow==10.1.0
-requests==2.31.0
+streamlit>=1.32.0
+pandas>=2.2.0
+numpy>=1.26.0
+plotly>=5.20.0
+pvlib>=0.10.0
+reportlab>=4.0.0
+pillow>=10.0.0
